@@ -1,9 +1,10 @@
-﻿import logging
+import logging
 import datetime
 import sqlite3
 import html
 import time
 import os
+
 
 from telegram import Update, BotCommand
 from telegram.ext import (
@@ -351,6 +352,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_bot_commands(application: Application):
     commands = [
         BotCommand("start", "Ботты бастау"),
+        BotCommand("order", "Заказать товар"), 
+        BotCommand("menu", "Меню вкусы и цена"),
         BotCommand("help", "Көмек"),
         BotCommand("profile", "Профильді көру"),
         BotCommand("save_my_text", "Мәтін сақтау"),
@@ -358,6 +361,26 @@ async def set_bot_commands(application: Application):
     ]
 
     await application.bot.set_my_commands(commands)
+
+
+
+
+async def order_product(update, context):
+    await update.message.reply_text(
+        "Напишите этому человеку @from_aksh."
+    ) 
+
+
+
+
+async def menu_and_price(update, context):
+    await update.message.reply_text(
+        "Меню вкусы:\n"
+        "Дәм түрлері осында жазылады\n\n"
+        "Цена: 1000 теңге"
+    )
+
+
 
 
 # ================== BOT BUILDER ==================
@@ -370,10 +393,22 @@ def build_application():
     )
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("order", order_product))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("profile", profile))
     application.add_handler(CommandHandler("save_my_text", save_my_text))
     application.add_handler(CommandHandler("my_text", show_my_text))
+
+
+    application.add_handler(
+        MessageHandler(
+            filters.Regex("^Меню вкусы и Цена$"),
+            menu_and_price
+        )
+    )
+
+  
+
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
