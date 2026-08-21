@@ -417,6 +417,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         # Басқа қателерді тіркеу
         logger.error(f"Төмендегі update қате тудырды: {update}", exc_info=context.error)
 
+
+async def profile_command(update, context):
+    await update.message.reply_text("Бұл сіздің профиліңіз.")
+
+
 # -------------------- Ботты іске қосу --------------------
 
 async def set_bot_commands(application: Application):
