@@ -259,6 +259,13 @@ def get_bot_stats():
 
 # -------------------- Командалар --------------------
 
+async def admin_stats_command(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("Бұл команда тек админге арналған!")
+        return
+    await update.message.reply_text("📊 Бот статистикасы: ...")
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
