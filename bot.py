@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 DB_NAME = "bot_database.db"
 
 # Render Environment Variables-дан алу үшін "BOT_TOKEN" атымен токенді қосуды ұмытпаңыз!
-BOT_TOKEN = os.getenv("8178654145:AAEqpzmHarA89arEsT7Ih2gqhQo49Y5NvQA")
-ADMIN_ID = os.getenv("8129855972") # ADMIN_ID-ны да Render Environment Variables-да қосу ұсынылады
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = os.getenv("ADMIN_ID") # ADMIN_ID-ны да Render Environment Variables-да қосу ұсынылады
 
 if not BOT_TOKEN:
     logger.error("BOT_TOKEN табылмады! Render Environment Variables-да 'BOT_TOKEN' атымен қосыңыз.")
