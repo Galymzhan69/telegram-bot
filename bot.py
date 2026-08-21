@@ -432,34 +432,37 @@ def set_bot_commands(application: Application):
 
     application.bot.set_my_commands(commands)
 
-def main():
-    # Мәліметтер базасын инициализациялау
-    init_db()
 
+def main():
     # Application құру
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Команда тіркеушілері
+    # Командаларды тіркеу
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("profile", profile_command))
     application.add_handler(CommandHandler("save_my_text", save_my_text))
     application.add_handler(CommandHandler("my_text", my_text))
+
     if ADMIN_ID:
-        application.add_handler(CommandHandler("stats", admin_stats_command))
+        application.add_handler(
+            CommandHandler("stats", admin_stats_command)
+        )
 
-    # Хабарлама тіркеушісі (барлық басқа хабарламалар үшін)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_message
+        )
+    )
 
-    # Қате тіркеушісі
     application.add_error_handler(error_handler)
 
-    # Telegram-да бұйрықтарды орнату
     set_bot_commands(application)
 
-    # Ботты іске қосу
     logger.info("Бот іске қосылуда...")
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()
