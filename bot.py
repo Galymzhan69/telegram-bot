@@ -419,7 +419,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # -------------------- Ботты іске қосу --------------------
 
-def set_bot_commands(application: Application):
+async def set_bot_commands(application: Application):
     commands = [
         BotCommand("start", "Ботты бастау"),
         BotCommand("help", "Көмек"),
@@ -430,7 +430,7 @@ def set_bot_commands(application: Application):
     if ADMIN_ID: # Тек админ болса, админ командасын қосу
         commands.append(BotCommand("stats", "Статистика"))
 
-    application.bot.set_my_commands(commands)
+    await application.bot.set_my_commands(commands)
 
 
 def main():
@@ -458,7 +458,8 @@ def main():
 
     application.add_error_handler(error_handler)
 
-    set_bot_commands(application)
+    # Командаларды іске қосу кезінде жүктеу (post_init арқылы)
+    application.post_init = set_bot_commands
 
     logger.info("Бот іске қосылуда...")
     application.run_polling()
