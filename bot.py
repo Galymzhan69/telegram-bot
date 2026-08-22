@@ -20,15 +20,13 @@ import sqlite3
 
 # -------------------- БАПТАУЛАР --------------------
 BOT_TOKEN = "8178654145:AAEqpzmHarA89arEsT7Ih2gqhQo49Y5NvQA"
-ADMIN_ID = 8129855972  # ОСЫ_ЖЕРГЕ_ӨЗ_TELEGRAM_ID_ЖАЗЫҢЫЗ (мысалы: 123456789)
+ADMIN_ID = 8129855972  # Сіздің Telegram ID-іңіз
 
-# Логтарды баптау
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Пайдаланушылардың соңғы әрекеттерін сақтау (Админге кімнің не жазғанын/басқанын көрсету үшін)
 user_logs_list = []
 
 # -------------------- ДЕРЕКҚОР (DATABASE) --------------------
@@ -56,13 +54,11 @@ def db_add_or_update_user(user_id: int, username: str):
     row = cursor.fetchone()
 
     if row is None:
-        # Жаңа пайдаланушы
         cursor.execute("""
             INSERT INTO users (user_id, username, first_seen, last_active, is_blocked)
             VALUES (?, ?, ?, ?, 0)
         """, (user_id, username, now_str, now_str))
     else:
-        # Бар пайдаланушы — соңғы белсенділігін жаңарту
         cursor.execute("""
             UPDATE users 
             SET username = ?, last_active = ?, is_blocked = 0 
@@ -79,33 +75,45 @@ def mark_user_blocked(user_id: int):
     conn.commit()
     conn.close()
 
-# Пайдаланушының не жазғанын немесе кай команда басқанын сақтау
-def save_user_action(user, action_text):
+# Пайдаланушы әрекетін сақтау және АДМИНГЕ СРАЗУ ХАБАРЛАМА ЖІБЕРУ
+async def track_and_notify_admin(context: ContextTypes.DEFAULT_TYPE, user, action_text: str):
     username = f"@{user.username}" if user.username else "Жоқ"
     time_now = datetime.now().strftime("%H:%M:%S")
+    
     log_line = (
         f"⏰ `{time_now}` | 👤 **{user.first_name}** ({username})\n"
         f"🆔 ID: `{user.id}`\n"
-        f"💬 **Жазылған/Команда:** {action_text}\n"
+        f"💬 **Әрекет:** {action_text}\n"
         f"------------------------------------"
     )
     user_logs_list.append(log_line)
-    if len(user_logs_list) > 30: # Тізім асып кетпеуі үшін соңғы 30-ын ұстаймыз
+    if len(user_logs_list) > 50:
         user_logs_list.pop(0)
+
+    # Админнің өзі жасаған әрекеті болмаса, админге бірден хабарлама жібереді
+    if user.id != ADMIN_ID:
+        try:
+            admin_msg = (
+                f"🚨 **Ботта жаңа белсенділік!**\n\n"
+                f"👤 Пайдаланушы: **{user.first_name}** ({username})\n"
+                f"🆔 ID: `{user.id}`\n"
+                f"💬 Басты/жазды: **{action_text}**"
+            )
+            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Админге хабарлама жіберуде қате: {e}")
 
 # -------------------- БАТЫРМАЛАР (KEYBOARDS) --------------------
 def get_main_keyboard(user_id: int):
     buttons = [
-        [KeyboardButton("Меню вкусы и цена")],
-        [KeyboardButton("Отзыв канал Jester")],
+        [KeyboardButton("🛒 Заказать товар"), KeyboardButton("Меню вкусы и цена")],
+        [KeyboardButton("Отзыв канал Jester"), KeyboardButton("👤 Профиль")]
     ]
-    # Тек сізге (админге) ғана көрінетін кнопка
     if user_id == ADMIN_ID:
-        buttons.append([KeyboardButton("👁 Кім кірді / Логтар")])
+        buttons.append([KeyboardButton("👁 Кіргендер тарихы"), KeyboardButton("📊 Статистика")])
         
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-# Менюдің астында тұратын "Заказать товар" батырмасы
 order_inline_keyboard = InlineKeyboardMarkup([
     [InlineKeyboardButton("Заказать товар", callback_data="order_product")]
 ])
@@ -187,7 +195,7 @@ Waka SoPro 20к тяг ≈ 15000₸ 11%
 Яблоко 🍏 ~ Груша 🍐  
 Клубника 🍓 ~ Арбуз 🍉 
 Клубника 🍓 + лёд 🧊 
-Lайм 💫 + лёд 🧊 
+Лайм 💫 + лёд 🧊 
 
 Waka XLAND 15к тяг ≈ 14000₸  9-11% 
 
@@ -317,30 +325,30 @@ Waka Slam 2.3к тяг ≈ 4000₸  5-7%
 
 # -------------------- КОМАНДАЛАР --------------------
 
-# 1. Start командасы
+# Start командасы
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db_add_or_update_user(user.id, user.username or user.first_name)
-    save_user_action(user, "/start")
+    await track_and_notify_admin(context, user, "/start")
     
     await update.message.reply_text(
         "Сәлеметсіз бе ? Jester магазиніне қош келдіңіз !",
         reply_markup=get_main_keyboard(user.id)
     )
 
-# 2. Заказать разку командасы
+# Order командасы
 async def order_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db_add_or_update_user(user.id, user.username or user.first_name)
-    save_user_action(user, "/order")
+    await track_and_notify_admin(context, user, "Заказать товар")
     
     await update.message.reply_text("Напишите этому человеку @from_aksh")
 
-# 3. Профиль командасы
+# Profile командасы
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db_add_or_update_user(user.id, user.username or user.first_name)
-    save_user_action(user, "/profile")
+    await track_and_notify_admin(context, user, "Профиль тексерелді")
 
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
@@ -362,10 +370,9 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# 4. Статистика командасы (Тек админге арналған)
+# Stats командасы
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    
     if user.id != ADMIN_ID:
         return
 
@@ -397,7 +404,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# ТЕК АДМИНГЕ: Пайдаланушылардың не жазғанын/басқанын көру командасы
+# Логтарды көрсету (Админге)
 async def show_user_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
@@ -407,61 +414,62 @@ async def show_user_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Әлі ешқандай белсенділік тіркелмеді.")
         return
 
-    logs_text = "\n".join(user_logs_list[-15:]) # Соңғы 15 әрекет
+    logs_text = "\n".join(user_logs_list[-20:])
     await update.message.reply_text(
-        f"🔍 **Кімнің не жазғаны/басқаны:**\n\n{logs_text}",
+        f"🔍 **Кімнің не жазғаны/басқаны (Тарих):**\n\n{logs_text}",
         parse_mode="Markdown"
     )
 
-# Inline кнопка басылғанда ("Заказать товар" батырмасы)
+# Inline кнопка өңдеу
 async def inline_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "order_product":
-        save_user_action(query.from_user, "Кнопка: Заказать товар")
+        await track_and_notify_admin(context, query.from_user, "Inline Кнопка: Заказать товар")
         await query.message.reply_text("Напишите этому человеку @from_aksh")
 
-# Әр хабарлама мен батырмаларды өңдеу
+# Текстік хабарламаларды өңдеу
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
 
     if user:
         db_add_or_update_user(user.id, user.username or user.first_name)
-        save_user_action(user, text)
+        await track_and_notify_admin(context, user, text)
 
-    # Жаңа команда-батырмаларды тексереміз:
     if text == "Отзыв канал Jester":
         await update.message.reply_text("Наш отзыв канал https://t.me/+T4PUwlWmxNdhYWQ6")
     elif text == "Меню вкусы и цена":
         await update.message.reply_text(MENU_TEXT, reply_markup=order_inline_keyboard)
-    elif text == "👁 Кім кірді / Логтар":
+    elif text == "🛒 Заказать товар":
+        await order_command(update, context)
+    elif text == "👤 Профиль":
+        await profile_command(update, context)
+    elif text == "👁 Кіргендер тарихы":
         await show_user_logs(update, context)
+    elif text == "📊 Статистика":
+        await stats_command(update, context)
 
-# Қателерді ұстау (пайдаланушы ботты блокқа тықса анықтау)
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     if isinstance(context.error, Exception):
         if "bot was blocked by the user" in str(context.error).lower():
             if isinstance(update, Update) and update.effective_user:
                 mark_user_blocked(update.effective_user.id)
 
-# Меню баптау
 async def set_bot_commands(application: Application):
     commands = [
         BotCommand("start", "Ботты бастау"),
-        BotCommand("order", "Заказать разку"),
+        BotCommand("order", "Заказать товар"),
         BotCommand("profile", "Профильді көру"),
     ]
     
-    # Статистика командасы ТЕК Админнің Telegram-ында ғана менюде көрінеді
     if ADMIN_ID:
         await application.bot.set_my_commands(
             commands + [BotCommand("stats", "Статистика (Админ)")],
             scope={"type": "chat", "chat_id": ADMIN_ID}
         )
     
-    # Қарапайым пайдаланушыларға арналған меню
     await application.bot.set_my_commands(commands)
 
 # -------------------- ІСКЕ ҚОСУ --------------------
