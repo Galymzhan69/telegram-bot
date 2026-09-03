@@ -21,6 +21,7 @@ import sqlite3
 # -------------------- БАПТАУЛАР --------------------
 BOT_TOKEN = "8178654145:AAEqpzmHarA89arEsT7Ih2gqhQo49Y5NvQA"
 ADMIN_ID = 8129855972  # Сіздің Telegram ID-іңіз
+REFERRAL_REWARD = 120  # 1 адам шақырғаны үшін берілетін сумма (тенге)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -33,32 +34,57 @@ user_logs_list = []
 def init_db():
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
+    # Тұрақты бағандармен кесте жасау
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             first_seen TEXT,
             last_active TEXT,
-            is_blocked INTEGER DEFAULT 0
+            is_blocked INTEGER DEFAULT 0,
+            referred_by INTEGER DEFAULT NULL,
+            balance INTEGER DEFAULT 0,
+            referrals_count INTEGER DEFAULT 0
         )
     """)
+    
+    # Ескі дерекқор болса, жаңа бағандарды қосу (миграция)
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if "referred_by" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER DEFAULT NULL")
+    if "balance" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN balance INTEGER DEFAULT 0")
+    if "referrals_count" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN referrals_count INTEGER DEFAULT 0")
+
     conn.commit()
     conn.close()
 
-def db_add_or_update_user(user_id: int, username: str):
+def db_add_or_update_user(user_id: int, username: str, referrer_id: int = None):
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute("SELECT first_seen FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT first_seen, referred_by FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
 
     if row is None:
+        # Жаңа пайдаланушыны сақтау
         cursor.execute("""
-            INSERT INTO users (user_id, username, first_seen, last_active, is_blocked)
-            VALUES (?, ?, ?, ?, 0)
-        """, (user_id, username, now_str, now_str))
+            INSERT INTO users (user_id, username, first_seen, last_active, is_blocked, referred_by, balance, referrals_count)
+            VALUES (?, ?, ?, ?, 0, ?, 0, 0)
+        """, (user_id, username, now_str, now_str, referrer_id))
+        
+        # Егер оны біреу шақырған болса, шақырған адамға 120тг және +1 реферал қосу
+        if referrer_id and referrer_id != user_id:
+            cursor.execute("""
+                UPDATE users 
+                SET balance = balance + ?, referrals_count = referrals_count + 1 
+                WHERE user_id = ?
+            """, (REFERRAL_REWARD, referrer_id))
     else:
+        # Бар пайдаланушы мәліметін жаңарту
         cursor.execute("""
             UPDATE users 
             SET username = ?, last_active = ?, is_blocked = 0 
@@ -90,7 +116,6 @@ async def track_and_notify_admin(context: ContextTypes.DEFAULT_TYPE, user, actio
     if len(user_logs_list) > 50:
         user_logs_list.pop(0)
 
-    # Админнің өзі жасаған әрекеті болмаса, админге бірден хабарлама жібереді
     if user.id != ADMIN_ID:
         try:
             admin_msg = (
@@ -107,10 +132,12 @@ async def track_and_notify_admin(context: ContextTypes.DEFAULT_TYPE, user, actio
 def get_main_keyboard(user_id: int):
     buttons = [
         [KeyboardButton("🛒 Заказать товар"), KeyboardButton("Меню вкусы и цена")],
+        [KeyboardButton("🔗 Рефералка"), KeyboardButton("💰 Баланс")],
         [KeyboardButton("Отзыв канал Jester"), KeyboardButton("👤 Профиль")]
     ]
     if user_id == ADMIN_ID:
         buttons.append([KeyboardButton("👁 Кіргендер тарихы"), KeyboardButton("📊 Статистика")])
+        buttons.append([KeyboardButton("👥 Рефералдар тізімі")])
         
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
@@ -325,10 +352,18 @@ Waka Slam 2.3к тяг ≈ 4000₸  5-7%
 
 # -------------------- КОМАНДАЛАР --------------------
 
-# Start командасы
+# Start командасы (Реферал сілтемені тексеру қосылған)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    db_add_or_update_user(user.id, user.username or user.first_name)
+    referrer_id = None
+    
+    # Егер рефералдық сілтеме арқылы кірсе (/start 12345678)
+    if context.args and context.args[0].isdigit():
+        possible_referrer = int(context.args[0])
+        if possible_referrer != user.id:
+            referrer_id = possible_referrer
+
+    db_add_or_update_user(user.id, user.username or user.first_name, referrer_id)
     await track_and_notify_admin(context, user, "/start")
     
     await update.message.reply_text(
@@ -352,21 +387,137 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT first_seen, last_active FROM users WHERE user_id = ?", (user.id,))
+    cursor.execute("SELECT first_seen, last_active, balance, referrals_count FROM users WHERE user_id = ?", (user.id,))
     row = cursor.fetchone()
     conn.close()
 
     if row:
-        first_seen, last_active = row
+        first_seen, last_active, balance, referrals = row
         text = (
             f"👤 **Сіздің профиліңіз:**\n\n"
             f"🆔 **ID:** `{user.id}`\n"
             f"👤 **Атыңыз:** {user.first_name}\n"
+            f"💰 **Баланс:** {balance} ₸\n"
+            f"👥 **Шақырған адамдарыңыз:** {referrals}\n"
             f"📅 **Ботқа бірінші рет кірген күніңіз:** {first_seen}\n"
             f"⚡ **Соңғы белсенділік:** {last_active}"
         )
     else:
         text = "Профиль мәліметтері табылмады."
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# 2. Рефералка командасы
+async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    db_add_or_update_user(user.id, user.username or user.first_name)
+    await track_and_notify_admin(context, user, "Рефералка батырмасын басты")
+
+    bot_info = await context.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
+
+    text = (
+        f"🎁 **Рефералдық бағдарлама!**\n\n"
+        f"Достарыңызды ботқа шақырып, **әрбір адам үшін {REFERRAL_REWARD} ₸** заңды түрде табыңыз!\n\n"
+        f"🔗 **Сіздің жеке сілтемеңіз:**\n`{ref_link}`\n\n"
+        f"📌 Сілтемеңізді достарыңызға жіберіңіз. Олар ботқа өтіп `/start` батырмасын басқанда сіздің балансыңызға бірден 120 ₸ қосылады!"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# 3. Баланс командасы
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    db_add_or_update_user(user.id, user.username or user.first_name)
+    await track_and_notify_admin(context, user, "Баланс тексерді")
+
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT balance, referrals_count FROM users WHERE user_id = ?", (user.id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    balance = row[0] if row else 0
+    referrals = row[1] if row else 0
+
+    text = (
+        f"💰 **Сіздің балансыңыз:**\n\n"
+        f"💵 **Сумма:** {balance} ₸\n"
+        f"👥 **Шақырылған адамдар:** {referrals} адам\n\n"
+        f"💡 Балансты арттыру үшін достарыңызды шақырыңыз!"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# 1. АДМИН: Барлық пайдаланушыларға рассылка жіберу (/send)
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+
+    # Тексеру: Текст жазылған ба? (Мысалы: /send Бүгін скидка!)
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ **Қолдану тәсілі:**\n`/send Сіздің хабарламаңыз`\n\nМысалы:\n`/send Бүгін барлық тауарларға 20% скидка!`",
+            parse_mode="Markdown"
+        )
+        return
+
+    broadcast_text = " ".join(context.args)
+
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+    users = cursor.fetchall()
+    conn.close()
+
+    await update.message.reply_text(f"📢 Хабарлама {len(users)} пайдаланушыға жіберілуде...")
+
+    success_count = 0
+    blocked_count = 0
+
+    for user_row in users:
+        target_id = user_row[0]
+        try:
+            await context.bot.send_message(chat_id=target_id, text=broadcast_text)
+            success_count += 1
+        except Exception:
+            mark_user_blocked(target_id)
+            blocked_count += 1
+
+    await update.message.reply_text(
+        f"✅ **Жіберу аяқталды!**\n\n"
+        f"📥 Сәтті жеткізілді: **{success_count}**\n"
+        f"🚫 Ботты бұғаттағандар: **{blocked_count}**",
+        parse_mode="Markdown"
+    )
+
+# 4. АДМИН: Кім қанша адам қосқанын көру (/referrals)
+async def admin_referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    # Ең көп реферал жинаған 20 адамды шығару
+    cursor.execute("""
+        SELECT user_id, username, referrals_count, balance 
+        FROM users 
+        WHERE referrals_count > 0 
+        ORDER BY referrals_count DESC 
+        LIMIT 20
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("Әлі ешкім адам шақырмады.")
+        return
+
+    text = "👥 **Ең көп реферал қосқан пайдаланушылар тізімі:**\n\n"
+    for idx, row in enumerate(rows, start=1):
+        u_id, username, ref_count, balance = row
+        uname = f"@{username}" if username and not username.isdigit() else "Жоқ"
+        text += f"{idx}. 👤 ID: `{u_id}` ({uname}) — **{ref_count} адам** | 💰 {balance} ₸\n"
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -446,10 +597,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await order_command(update, context)
     elif text == "👤 Профиль":
         await profile_command(update, context)
+    elif text == "🔗 Рефералка":
+        await referral_command(update, context)
+    elif text == "💰 Баланс":
+        await balance_command(update, context)
     elif text == "👁 Кіргендер тарихы":
         await show_user_logs(update, context)
     elif text == "📊 Статистика":
         await stats_command(update, context)
+    elif text == "👥 Рефералдар тізімі":
+        await admin_referrals_command(update, context)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     if isinstance(context.error, Exception):
@@ -462,11 +619,19 @@ async def set_bot_commands(application: Application):
         BotCommand("start", "Ботты бастау"),
         BotCommand("order", "Заказать товар"),
         BotCommand("profile", "Профильді көру"),
+        BotCommand("referral", "Рефералка"),
+        BotCommand("balance", "Баланс көру"),
     ]
     
+    admin_commands = commands + [
+        BotCommand("stats", "Статистика (Админ)"),
+        BotCommand("send", "Барлығына хабарлама (Админ)"),
+        BotCommand("referrals", "Рефералдар тізімі (Админ)")
+    ]
+
     if ADMIN_ID:
         await application.bot.set_my_commands(
-            commands + [BotCommand("stats", "Статистика (Админ)")],
+            admin_commands,
             scope={"type": "chat", "chat_id": ADMIN_ID}
         )
     
@@ -478,10 +643,17 @@ def main():
 
     application = Application.builder().token(BOT_TOKEN).build()
 
+    # Базалық командалар
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("order", order_command))
     application.add_handler(CommandHandler("profile", profile_command))
+    application.add_handler(CommandHandler("referral", referral_command))
+    application.add_handler(CommandHandler("balance", balance_command))
+    
+    # Админ командалары
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("send", broadcast_command))
+    application.add_handler(CommandHandler("referrals", admin_referrals_command))
 
     application.add_handler(CallbackQueryHandler(inline_button_click))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
