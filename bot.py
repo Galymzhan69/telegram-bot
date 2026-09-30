@@ -19,7 +19,7 @@ from telegram.ext import (
 import sqlite3
 
 # -------------------- БАПТАУЛАР --------------------
-BOT_TOKEN = "8178654145:AAEqpzmHarA89arEsT7Ih2gqhQo49Y5NvQA"
+BOT_TOKEN = "8926617257:AAGnDqHpTq1xF0ARhAwItArCmodwunbRLyg"
 ADMIN_ID = 8129855972  # Сіздің Telegram ID-іңіз
 REFERRAL_REWARD = 120  # 1 адам шақырғаны үшін берілетін сумма (тенге)
 
